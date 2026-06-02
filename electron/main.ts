@@ -2,10 +2,12 @@ import { app, BrowserWindow, dialog, ipcMain, shell, WebContents } from 'electro
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import {
   AudioCodec,
+  BinarySource,
   CompressionRequest,
   CompressionResult,
   EngineState,
@@ -16,6 +18,15 @@ import {
   SimplePreset,
   VideoCodec
 } from './shared';
+
+const runtimeRequire = createRequire(__filename);
+
+type BinaryName = 'ffmpeg' | 'ffprobe';
+
+interface BinaryResolution {
+  path: string;
+  source: BinarySource;
+}
 
 const SUPPORTED_INPUT_EXTENSIONS = [
   'mp4',
@@ -87,15 +98,17 @@ app.on('window-all-closed', () => {
 
 function registerIpc() {
   ipcMain.handle('app:get-engine-state', async (): Promise<EngineState> => {
-    const ffmpegPath = await resolveBinary('ffmpeg');
-    const ffprobePath = await resolveBinary('ffprobe');
+    const ffmpeg = await resolveBinary('ffmpeg');
+    const ffprobe = await resolveBinary('ffprobe');
     const defaultOutputDir = await ensureDefaultOutputDir();
 
     return {
-      ffmpegPath,
-      ffprobePath,
-      ffmpegReady: Boolean(ffmpegPath),
-      ffprobeReady: Boolean(ffprobePath),
+      ffmpegPath: ffmpeg?.path,
+      ffprobePath: ffprobe?.path,
+      ffmpegSource: ffmpeg?.source,
+      ffprobeSource: ffprobe?.source,
+      ffmpegReady: Boolean(ffmpeg),
+      ffprobeReady: Boolean(ffprobe),
       defaultOutputDir,
       supportedInputExtensions: SUPPORTED_INPUT_EXTENSIONS
     };
@@ -159,23 +172,50 @@ async function ensureDefaultOutputDir() {
   return outputDir;
 }
 
-async function resolveBinary(binaryName: 'ffmpeg' | 'ffprobe') {
+async function resolveBinary(binaryName: BinaryName): Promise<BinaryResolution | undefined> {
   const envPath = binaryName === 'ffmpeg' ? process.env.FFMPEG_PATH : process.env.FFPROBE_PATH;
-  const candidates = [
-    envPath,
-    binaryName,
-    `/opt/homebrew/bin/${binaryName}`,
-    `/usr/local/bin/${binaryName}`,
-    `/usr/bin/${binaryName}`
-  ].filter(Boolean) as string[];
+  const candidates: BinaryResolution[] = [
+    ...bundledBinaryCandidates(binaryName),
+    ...(envPath ? [{ path: envPath, source: 'environment' as const }] : []),
+    { path: binaryName, source: 'system' },
+    { path: `/opt/homebrew/bin/${binaryName}`, source: 'system' },
+    { path: `/usr/local/bin/${binaryName}`, source: 'system' },
+    { path: `/usr/bin/${binaryName}`, source: 'system' }
+  ];
 
   for (const candidate of candidates) {
-    if (await canRun(candidate, ['-version'])) {
+    if (await canRun(candidate.path, ['-version'])) {
       return candidate;
     }
   }
 
   return undefined;
+}
+
+function bundledBinaryCandidates(binaryName: BinaryName): BinaryResolution[] {
+  try {
+    const packageName = binaryName === 'ffmpeg' ? 'ffmpeg-static' : 'ffprobe-static';
+    const staticModule = runtimeRequire(packageName) as string | { path?: string };
+    const binaryPath = typeof staticModule === 'string' ? staticModule : staticModule.path;
+    if (!binaryPath) {
+      return [];
+    }
+
+    return asarExecutableCandidates(binaryPath).map((candidatePath) => ({
+      path: candidatePath,
+      source: 'bundled' as const
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function asarExecutableCandidates(binaryPath: string) {
+  const candidates = [binaryPath];
+  if (binaryPath.includes('app.asar')) {
+    candidates.unshift(binaryPath.replace('app.asar', 'app.asar.unpacked'));
+  }
+  return [...new Set(candidates)];
 }
 
 function canRun(command: string, args: string[]) {
@@ -219,12 +259,12 @@ function hashFileId(filePath: string, size: number, mtimeMs: number) {
 }
 
 async function probeMedia(filePath: string) {
-  const ffprobePath = await resolveBinary('ffprobe');
-  if (!ffprobePath) {
+  const ffprobe = await resolveBinary('ffprobe');
+  if (!ffprobe) {
     return {};
   }
 
-  const result = await captureProcess(ffprobePath, [
+  const result = await captureProcess(ffprobe.path, [
     '-v',
     'error',
     '-print_format',
@@ -289,9 +329,9 @@ function captureProcess(command: string, args: string[]) {
 }
 
 async function startCompression(webContents: WebContents, request: CompressionRequest): Promise<CompressionResult> {
-  const ffmpegPath = await resolveBinary('ffmpeg');
-  if (!ffmpegPath) {
-    throw new Error('没有找到 ffmpeg。请先通过 Homebrew 安装 ffmpeg，或设置 FFMPEG_PATH。');
+  const ffmpeg = await resolveBinary('ffmpeg');
+  if (!ffmpeg) {
+    throw new Error('没有找到 FFmpeg。请重新安装依赖，或通过 Homebrew 安装 ffmpeg，或设置 FFMPEG_PATH。');
   }
 
   await fs.promises.mkdir(request.outputDir, { recursive: true });
@@ -302,7 +342,7 @@ async function startCompression(webContents: WebContents, request: CompressionRe
   const startedAt = Date.now();
 
   return new Promise((resolve, reject) => {
-    const child = spawn(ffmpegPath, ffmpegArgs);
+    const child = spawn(ffmpeg.path, ffmpegArgs);
     runningJobs.set(request.jobId, child);
 
     let stderrBuffer = '';

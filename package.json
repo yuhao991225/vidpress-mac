@@ -1,12 +1,13 @@
 {
   "name": "vidpress-mac",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local-first macOS desktop app for compressing and exporting popular video formats.",
   "main": "dist-electron/main.js",
   "type": "commonjs",
   "license": "MIT",
   "author": "",
   "scripts": {
+    "bootstrap:cn": "FFMPEG_BINARIES_URL=https://npmmirror.com/mirrors/ffmpeg-static npm install && npm run prepare-electron",
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite --host 127.0.0.1 --port 5173",
     "dev:electron": "wait-on tcp:5173 && tsc -p tsconfig.electron.json && npm run prepare-electron && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
@@ -23,6 +24,8 @@
     "macos"
   ],
   "dependencies": {
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
     "lucide-react": "^1.17.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
@@ -49,7 +52,19 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/ffprobe-static/index.js",
+      "node_modules/ffprobe-static/package.json",
+      "node_modules/ffprobe-static/LICENSE",
+      "node_modules/ffprobe-static/bin/darwin/arm64/ffprobe",
+      "!node_modules/ffprobe-static/bin/linux/**",
+      "!node_modules/ffprobe-static/bin/win32/**",
+      "!node_modules/ffprobe-static/bin/darwin/x64/**",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/ffmpeg",
+      "node_modules/ffprobe-static/bin/darwin/arm64/ffprobe"
     ],
     "mac": {
       "category": "public.app-category.video",

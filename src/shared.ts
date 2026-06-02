@@ -10,6 +10,8 @@ export type AudioCodec = 'aac' | 'opus' | 'mp3' | 'copy';
 
 export type ResolutionPreset = 'source' | '2160p' | '1080p' | '720p' | '480p' | 'custom';
 
+export type BinarySource = 'bundled' | 'environment' | 'system';
+
 export interface MediaFile {
   id: string;
   path: string;
@@ -67,6 +69,8 @@ export interface CompressionResult {
 export interface EngineState {
   ffmpegPath?: string;
   ffprobePath?: string;
+  ffmpegSource?: BinarySource;
+  ffprobeSource?: BinarySource;
   ffmpegReady: boolean;
   ffprobeReady: boolean;
   defaultOutputDir: string;

@@ -259,7 +259,7 @@ function App() {
 
         <div className="engine-status">
           <span className={engine?.ffmpegReady ? 'status-dot ready' : 'status-dot'} />
-          <span>{engine?.ffmpegReady ? 'FFmpeg 已就绪' : '未找到 FFmpeg'}</span>
+          <span>{engineStatusText(engine)}</span>
         </div>
       </header>
 
@@ -605,6 +605,19 @@ function statusLabel(status: JobStatus) {
     cancelled: '已取消'
   };
   return labels[status];
+}
+
+function engineStatusText(engine: EngineState | null) {
+  if (!engine?.ffmpegReady) {
+    return '未找到 FFmpeg';
+  }
+
+  const labels = {
+    bundled: '内置',
+    environment: '环境变量',
+    system: '系统'
+  };
+  return `${engine.ffmpegSource ? labels[engine.ffmpegSource] : ''} FFmpeg 已就绪`;
 }
 
 function formatBytes(bytes: number) {

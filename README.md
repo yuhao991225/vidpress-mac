@@ -4,6 +4,7 @@ VidPress 是一款 macOS 本地视频压缩桌面 app。视频文件只在本机
 
 ## 功能
 
+- Release 版内置 FFmpeg 和 FFprobe，视频压缩默认不依赖外部网站或 Homebrew。
 - 支持常见输入格式：MP4、MOV、M4V、MKV、WebM、AVI、WMV、FLV、MPEG、3GP、TS、MTS、M2TS。
 - 支持导出格式：MP4、MOV、MKV、WebM、AVI。
 - 傻瓜模式：视频无损、高质量、均衡、小体积、社交平台。
@@ -12,11 +13,17 @@ VidPress 是一款 macOS 本地视频压缩桌面 app。视频文件只在本机
 
 ## 本地运行
 
-VidPress 使用本机 FFmpeg 执行压缩。当前版本会自动查找 `ffmpeg` 和 `ffprobe`。
+VidPress 会优先使用内置 FFmpeg/FFprobe，随后才会查找 `FFMPEG_PATH`、`FFPROBE_PATH` 或系统路径里的 `ffmpeg` 和 `ffprobe`。
 
 ```bash
-brew install ffmpeg
 npm install
+npm run dev
+```
+
+如果安装 `ffmpeg-static` 时 GitHub 下载较慢，可以使用镜像：
+
+```bash
+npm run bootstrap:cn
 npm run dev
 ```
 
@@ -32,3 +39,5 @@ npm run dist
 ## 说明
 
 “视频无损”会对画面做无损重编码，体积不一定比原视频更小；不同源视频、编码器和容器格式会影响最终结果。
+
+Release 包内的 FFmpeg 来自 `ffmpeg-static`，遵循其上游 GPL-3.0-or-later 许可；FFprobe 来自 `ffprobe-static`。
