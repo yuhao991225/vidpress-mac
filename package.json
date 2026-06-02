@@ -1,0 +1,61 @@
+{
+  "name": "vidpress-mac",
+  "version": "0.1.0",
+  "description": "A local-first macOS desktop app for compressing and exporting popular video formats.",
+  "main": "dist-electron/main.js",
+  "type": "commonjs",
+  "license": "MIT",
+  "author": "",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite --host 127.0.0.1 --port 5173",
+    "dev:electron": "wait-on tcp:5173 && tsc -p tsconfig.electron.json && npm run prepare-electron && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build": "tsc -p tsconfig.electron.json && vite build",
+    "dist": "npm run build && npm run prepare-electron && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder",
+    "prepare-electron": "cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
+  },
+  "keywords": [
+    "video",
+    "compression",
+    "ffmpeg",
+    "electron",
+    "macos"
+  ],
+  "dependencies": {
+    "lucide-react": "^1.17.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16",
+    "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "com.local.vidpress",
+    "productName": "VidPress",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "target": [
+        "zip"
+      ]
+    }
+  }
+}
