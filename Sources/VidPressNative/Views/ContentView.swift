@@ -308,7 +308,7 @@ private struct ProfessionalSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("视频编码", selection: $settings.videoCodec) {
-                ForEach(VideoCodec.allCases) { codec in
+                ForEach(settings.outputContainer.supportedVideoCodecs) { codec in
                     Text(codec.title).tag(codec)
                 }
             }
@@ -348,7 +348,7 @@ private struct ProfessionalSettingsView: View {
             Toggle("移除音频", isOn: $settings.removeAudio)
 
             Picker("音频编码", selection: $settings.audioCodec) {
-                ForEach(AudioCodec.allCases) { codec in
+                ForEach(settings.outputContainer.supportedAudioCodecs) { codec in
                     Text(codec.title).tag(codec)
                 }
             }

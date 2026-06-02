@@ -46,7 +46,7 @@ final class CompressionEngine {
 
             guard process.terminationStatus == 0 else {
                 let message = String(data: errorOutput, encoding: .utf8) ?? "FFprobe 读取失败"
-                throw VidPressError(message.trimmingCharacters(in: .whitespacesAndNewlines))
+                throw VidPressError(FFmpegErrorMessage.explain(message, exitCode: process.terminationStatus, toolName: "FFprobe"))
             }
 
             let response = try JSONDecoder().decode(FFprobeResponse.self, from: output)
@@ -149,7 +149,7 @@ final class CompressionEngine {
                 } else if reason == .uncaughtSignal || status == 15 {
                     finish(.failure(CancellationError()))
                 } else {
-                    let message = trimmedError.isEmpty ? "FFmpeg 退出码 \(status)" : trimmedError
+                    let message = FFmpegErrorMessage.explain(trimmedError, exitCode: status)
                     finish(.failure(VidPressError(message)))
                 }
             }

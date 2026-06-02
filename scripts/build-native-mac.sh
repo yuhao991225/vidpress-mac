@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="VidPress"
 PRODUCT_NAME="VidPressNative"
 CONFIGURATION="${CONFIGURATION:-release}"
+VERSION="0.3.1"
 APP_PATH="$ROOT/release/$APP_NAME.app"
 ZIP_PATH="$ROOT/release/VidPress-native-mac-arm64.zip"
 
@@ -100,9 +101,9 @@ cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.3.0</string>
+  <string>__VIDPRESS_VERSION__</string>
   <key>CFBundleVersion</key>
-  <string>0.3.0</string>
+  <string>__VIDPRESS_VERSION__</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.video</string>
   <key>LSMinimumSystemVersion</key>
@@ -116,6 +117,8 @@ cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+perl -0pi -e "s/__VIDPRESS_VERSION__/$VERSION/g" "$APP_PATH/Contents/Info.plist"
 
 if command -v codesign >/dev/null 2>&1; then
   codesign --force --deep --sign - "$APP_PATH" >/dev/null

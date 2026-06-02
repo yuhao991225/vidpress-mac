@@ -2,6 +2,7 @@ import Foundation
 
 enum FFmpegArgumentBuilder {
     static func build(input: URL, output: URL, settings: CompressionSettings) -> [String] {
+        let settings = settings.normalizedForContainer()
         var arguments = [
             "-hide_banner",
             "-y",

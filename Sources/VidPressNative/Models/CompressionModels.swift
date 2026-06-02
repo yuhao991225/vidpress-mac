@@ -35,7 +35,7 @@ enum CompressionStatus: String, Codable, CaseIterable {
     }
 }
 
-enum VideoCodec: String, CaseIterable, Identifiable {
+enum VideoCodec: String, CaseIterable, Codable, Identifiable {
     case h264
     case h265
     case vp9
@@ -72,7 +72,7 @@ enum VideoCodec: String, CaseIterable, Identifiable {
     }
 }
 
-enum AudioCodec: String, CaseIterable, Identifiable {
+enum AudioCodec: String, CaseIterable, Codable, Identifiable {
     case aac
     case opus
     case mp3
@@ -99,7 +99,7 @@ enum AudioCodec: String, CaseIterable, Identifiable {
     }
 }
 
-enum OutputContainer: String, CaseIterable, Identifiable {
+enum OutputContainer: String, CaseIterable, Codable, Identifiable {
     case mp4
     case mov
     case mkv
@@ -124,9 +124,37 @@ enum OutputContainer: String, CaseIterable, Identifiable {
         default: .aac
         }
     }
+
+    var supportedVideoCodecs: [VideoCodec] {
+        switch self {
+        case .mp4:
+            [.h264, .h265, .av1, .mpeg4, .copy]
+        case .mov:
+            [.h264, .h265, .mpeg4, .copy]
+        case .mkv:
+            [.h264, .h265, .vp9, .av1, .mpeg4, .copy]
+        case .webm:
+            [.vp9, .av1, .copy]
+        case .avi:
+            [.h264, .mpeg4, .copy]
+        }
+    }
+
+    var supportedAudioCodecs: [AudioCodec] {
+        switch self {
+        case .mp4, .mov:
+            [.aac, .mp3, .copy]
+        case .mkv:
+            [.aac, .opus, .mp3, .copy]
+        case .webm:
+            [.opus, .copy]
+        case .avi:
+            [.mp3, .copy]
+        }
+    }
 }
 
-enum SimplePreset: String, CaseIterable, Identifiable {
+enum SimplePreset: String, CaseIterable, Codable, Identifiable {
     case visuallyLossless
     case highQuality
     case balanced
@@ -156,7 +184,7 @@ enum SimplePreset: String, CaseIterable, Identifiable {
     }
 }
 
-enum EncoderSpeed: String, CaseIterable, Identifiable {
+enum EncoderSpeed: String, CaseIterable, Codable, Identifiable {
     case ultrafast
     case superfast
     case veryfast
@@ -184,7 +212,7 @@ enum EncoderSpeed: String, CaseIterable, Identifiable {
     }
 }
 
-struct CompressionSettings: Equatable {
+struct CompressionSettings: Codable, Equatable {
     var useProfessionalMode = false
     var simplePreset: SimplePreset = .balanced
     var outputContainer: OutputContainer = .mp4
@@ -206,6 +234,34 @@ struct CompressionSettings: Equatable {
         let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
         let homeMovies = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Movies")
         return (movies ?? homeMovies).appendingPathComponent("VidPress")
+    }
+
+    func normalizedForContainer() -> CompressionSettings {
+        var normalized = self
+
+        if !normalized.outputContainer.supportedVideoCodecs.contains(normalized.videoCodec) {
+            normalized.videoCodec = normalized.outputContainer.defaultVideoCodec
+        }
+
+        if !normalized.outputContainer.supportedAudioCodecs.contains(normalized.audioCodec) {
+            normalized.audioCodec = normalized.outputContainer.defaultAudioCodec
+        }
+
+        normalized.crf = min(max(normalized.crf, 0), 51)
+        normalized.videoBitrateKbps = max(normalized.videoBitrateKbps, 1)
+        normalized.audioBitrateKbps = max(normalized.audioBitrateKbps, 1)
+        normalized.width = max(normalized.width, 0)
+        normalized.height = max(normalized.height, 0)
+        normalized.fps = max(normalized.fps, 0)
+
+        if normalized.videoCodec == .copy {
+            normalized.useVideoBitrate = false
+            normalized.width = 0
+            normalized.height = 0
+            normalized.fps = 0
+        }
+
+        return normalized
     }
 }
 

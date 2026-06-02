@@ -6,7 +6,11 @@ import UniformTypeIdentifiers
 @MainActor
 final class CompressionViewModel: ObservableObject {
     @Published var jobs: [VideoJob] = []
-    @Published var settings = CompressionSettings()
+    @Published var settings = CompressionSettings() {
+        didSet {
+            persistAndNormalizeSettings()
+        }
+    }
     @Published var isDropTarget = false
     @Published var isRunning = false
     @Published var binaryStatusSummary = ""
@@ -14,9 +18,12 @@ final class CompressionViewModel: ObservableObject {
     @Published var footerMessage = "准备就绪"
 
     private let engine = CompressionEngine()
+    private let settingsStore = CompressionSettingsStore()
     private var queueTask: Task<Void, Never>?
+    private var isApplyingSettingsNormalization = false
 
     init() {
+        settings = settingsStore.load()
         refreshBinaryStatus()
     }
 
@@ -113,6 +120,7 @@ final class CompressionViewModel: ObservableObject {
 
     func startQueue() {
         guard !isRunning else { return }
+        settings = settings.normalizedForContainer()
 
         refreshBinaryStatus()
         guard binaryReady else {
@@ -217,6 +225,7 @@ final class CompressionViewModel: ObservableObject {
         guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
         let sourceURL = jobs[index].sourceURL
         let outputURL = uniqueOutputURL(for: jobs[index])
+        let compressionSettings = settings.normalizedForContainer()
         let duration = jobs[index].duration
 
         jobs[index].status = .compressing
@@ -228,7 +237,7 @@ final class CompressionViewModel: ObservableObject {
             let finishedURL = try await engine.compress(
                 input: sourceURL,
                 output: outputURL,
-                settings: settings,
+                settings: compressionSettings,
                 duration: duration
             ) { [weak self] fraction, detail in
                 guard let self, let currentIndex = self.jobs.firstIndex(where: { $0.id == id }) else { return }
@@ -263,8 +272,9 @@ final class CompressionViewModel: ObservableObject {
     private func uniqueOutputURL(for job: VideoJob) -> URL {
         let fileManager = FileManager.default
         let sourceName = job.sourceURL.deletingPathExtension().lastPathComponent
-        let mode = settings.useProfessionalMode ? "pro" : settings.simplePreset.slug
-        let ext = settings.outputContainer.fileExtension
+        let currentSettings = settings.normalizedForContainer()
+        let mode = currentSettings.useProfessionalMode ? "pro" : currentSettings.simplePreset.slug
+        let ext = currentSettings.outputContainer.fileExtension
         let baseName = "\(sourceName)-\(mode)"
         var candidate = settings.outputDirectory.appendingPathComponent("\(baseName).\(ext)")
         var counter = 2
@@ -275,6 +285,20 @@ final class CompressionViewModel: ObservableObject {
         }
 
         return candidate
+    }
+
+    private func persistAndNormalizeSettings() {
+        guard !isApplyingSettingsNormalization else { return }
+
+        let normalized = settings.normalizedForContainer()
+        if normalized != settings {
+            isApplyingSettingsNormalization = true
+            settings = normalized
+            isApplyingSettingsNormalization = false
+            footerMessage = "已调整为当前格式兼容的参数"
+        }
+
+        settingsStore.save(normalized)
     }
 
     private static func fileSize(_ url: URL) -> Int64? {
