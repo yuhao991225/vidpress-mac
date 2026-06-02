@@ -31,4 +31,20 @@ enum Formatters {
     static func percent(_ fraction: Double) -> String {
         String(format: "%.0f%%", min(max(fraction, 0), 1) * 100)
     }
+
+    static func bitRate(_ bitsPerSecond: Int64) -> String {
+        guard bitsPerSecond > 0 else { return "-" }
+        let kbps = Double(bitsPerSecond) / 1_000
+        if kbps >= 1_000 {
+            return "\(decimal(kbps / 1_000, maxFractionDigits: 1)) Mbps"
+        }
+        return "\(decimal(kbps, maxFractionDigits: 0)) kbps"
+    }
+
+    static func decimal(_ value: Double, maxFractionDigits: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = maxFractionDigits
+        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.\(maxFractionDigits)f", value)
+    }
 }

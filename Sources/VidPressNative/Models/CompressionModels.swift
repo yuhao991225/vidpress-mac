@@ -213,6 +213,8 @@ enum EncoderSpeed: String, CaseIterable, Codable, Identifiable {
 }
 
 struct CompressionSettings: Codable, Equatable {
+    var useTargetSizeMode = false
+    var targetSizeMB = 100
     var useProfessionalMode = false
     var simplePreset: SimplePreset = .balanced
     var outputContainer: OutputContainer = .mp4
@@ -229,6 +231,30 @@ struct CompressionSettings: Codable, Equatable {
     var fps = 0
     var audioBitrateKbps = 128
     var removeAudio = false
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        useTargetSizeMode = try container.decodeIfPresent(Bool.self, forKey: .useTargetSizeMode) ?? false
+        targetSizeMB = try container.decodeIfPresent(Int.self, forKey: .targetSizeMB) ?? 100
+        useProfessionalMode = try container.decodeIfPresent(Bool.self, forKey: .useProfessionalMode) ?? false
+        simplePreset = try container.decodeIfPresent(SimplePreset.self, forKey: .simplePreset) ?? .balanced
+        outputContainer = try container.decodeIfPresent(OutputContainer.self, forKey: .outputContainer) ?? .mp4
+        outputDirectory = try container.decodeIfPresent(URL.self, forKey: .outputDirectory) ?? Self.defaultOutputDirectory()
+        videoCodec = try container.decodeIfPresent(VideoCodec.self, forKey: .videoCodec) ?? .h264
+        audioCodec = try container.decodeIfPresent(AudioCodec.self, forKey: .audioCodec) ?? .aac
+        encoderSpeed = try container.decodeIfPresent(EncoderSpeed.self, forKey: .encoderSpeed) ?? .medium
+        crf = try container.decodeIfPresent(Int.self, forKey: .crf) ?? 24
+        useVideoBitrate = try container.decodeIfPresent(Bool.self, forKey: .useVideoBitrate) ?? false
+        videoBitrateKbps = try container.decodeIfPresent(Int.self, forKey: .videoBitrateKbps) ?? 2_400
+        width = try container.decodeIfPresent(Int.self, forKey: .width) ?? 0
+        height = try container.decodeIfPresent(Int.self, forKey: .height) ?? 0
+        fps = try container.decodeIfPresent(Int.self, forKey: .fps) ?? 0
+        audioBitrateKbps = try container.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? 128
+        removeAudio = try container.decodeIfPresent(Bool.self, forKey: .removeAudio) ?? false
+    }
 
     static func defaultOutputDirectory() -> URL {
         let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
@@ -250,9 +276,19 @@ struct CompressionSettings: Codable, Equatable {
         normalized.crf = min(max(normalized.crf, 0), 51)
         normalized.videoBitrateKbps = max(normalized.videoBitrateKbps, 1)
         normalized.audioBitrateKbps = max(normalized.audioBitrateKbps, 1)
+        normalized.targetSizeMB = min(max(normalized.targetSizeMB, 1), 100_000)
         normalized.width = max(normalized.width, 0)
         normalized.height = max(normalized.height, 0)
         normalized.fps = max(normalized.fps, 0)
+
+        if normalized.useTargetSizeMode {
+            normalized.useProfessionalMode = false
+            normalized.videoCodec = normalized.outputContainer.defaultVideoCodec
+            normalized.audioCodec = normalized.outputContainer.defaultAudioCodec
+            normalized.useVideoBitrate = true
+            normalized.audioBitrateKbps = min(max(normalized.audioBitrateKbps, 64), 192)
+            normalized.removeAudio = false
+        }
 
         if normalized.videoCodec == .copy {
             normalized.useVideoBitrate = false
@@ -270,6 +306,7 @@ struct VideoJob: Identifiable, Equatable {
     let sourceURL: URL
     var duration: Double?
     var sourceBytes: Int64?
+    var metadata: VideoMetadata?
     var outputURL: URL?
     var outputBytes: Int64?
     var progress: Double
@@ -281,6 +318,7 @@ struct VideoJob: Identifiable, Equatable {
         self.sourceURL = sourceURL
         self.duration = nil
         self.sourceBytes = sourceBytes
+        self.metadata = nil
         self.outputURL = nil
         self.outputBytes = nil
         self.progress = 0
@@ -302,11 +340,47 @@ struct VideoJob: Identifiable, Equatable {
         let percent = Double(saved) / Double(sourceBytes) * 100
         return String(format: "节省 %.1f%%", percent)
     }
+
+    var canRetry: Bool {
+        status == .failed || status == .canceled
+    }
 }
 
-struct VideoMetadata {
+struct VideoMetadata: Equatable {
     let duration: Double?
     let size: Int64?
+    let videoCodec: String?
+    let audioCodec: String?
+    let width: Int?
+    let height: Int?
+    let fps: Double?
+    let bitRate: Int64?
+
+    var summary: String {
+        var parts: [String] = []
+
+        if let width, let height {
+            parts.append("\(width)x\(height)")
+        }
+
+        if let fps, fps > 0 {
+            parts.append("\(Formatters.decimal(fps, maxFractionDigits: fps >= 10 ? 0 : 1))fps")
+        }
+
+        if let videoCodec, !videoCodec.isEmpty {
+            parts.append(videoCodec.uppercased())
+        }
+
+        if let audioCodec, !audioCodec.isEmpty {
+            parts.append("音频 \(audioCodec.uppercased())")
+        }
+
+        if let bitRate, bitRate > 0 {
+            parts.append(Formatters.bitRate(bitRate))
+        }
+
+        return parts.isEmpty ? "媒体信息已读取" : parts.joined(separator: " · ")
+    }
 }
 
 struct VidPressError: LocalizedError {

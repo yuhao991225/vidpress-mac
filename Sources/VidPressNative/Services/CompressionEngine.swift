@@ -31,7 +31,7 @@ final class CompressionEngine {
             process.executableURL = ffprobeURL
             process.arguments = [
                 "-v", "error",
-                "-show_entries", "format=duration,size",
+                "-show_entries", "format=duration,size,bit_rate:stream=codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,bit_rate",
                 "-of", "json",
                 url.path
             ]
@@ -50,9 +50,21 @@ final class CompressionEngine {
             }
 
             let response = try JSONDecoder().decode(FFprobeResponse.self, from: output)
+            let videoStream = response.streams?.first { $0.codecType == "video" }
+            let audioStream = response.streams?.first { $0.codecType == "audio" }
             let duration = response.format?.duration.flatMap(Double.init)
             let size = response.format?.size.flatMap(Int64.init)
-            return VideoMetadata(duration: duration, size: size)
+            let bitRate = response.format?.bitRate.flatMap(Int64.init) ?? videoStream?.bitRate.flatMap(Int64.init)
+            return VideoMetadata(
+                duration: duration,
+                size: size,
+                videoCodec: videoStream?.codecName,
+                audioCodec: audioStream?.codecName,
+                width: videoStream?.width,
+                height: videoStream?.height,
+                fps: Self.parseFrameRate(videoStream?.averageFrameRate ?? videoStream?.frameRate),
+                bitRate: bitRate
+            )
         }.value
     }
 
@@ -157,6 +169,18 @@ final class CompressionEngine {
 
         try process.run()
     }
+
+    private nonisolated static func parseFrameRate(_ value: String?) -> Double? {
+        guard let value, !value.isEmpty, value != "0/0" else { return nil }
+
+        if value.contains("/") {
+            let parts = value.split(separator: "/", maxSplits: 1).compactMap { Double($0) }
+            guard parts.count == 2, parts[1] != 0 else { return nil }
+            return parts[0] / parts[1]
+        }
+
+        return Double(value)
+    }
 }
 
 private final class ProcessOutputState: @unchecked Sendable {
@@ -224,7 +248,35 @@ private struct FFprobeResponse: Decodable {
     struct Format: Decodable {
         let duration: String?
         let size: String?
+        let bitRate: String?
+
+        enum CodingKeys: String, CodingKey {
+            case duration
+            case size
+            case bitRate = "bit_rate"
+        }
+    }
+
+    struct Stream: Decodable {
+        let codecType: String?
+        let codecName: String?
+        let width: Int?
+        let height: Int?
+        let frameRate: String?
+        let averageFrameRate: String?
+        let bitRate: String?
+
+        enum CodingKeys: String, CodingKey {
+            case codecType = "codec_type"
+            case codecName = "codec_name"
+            case width
+            case height
+            case frameRate = "r_frame_rate"
+            case averageFrameRate = "avg_frame_rate"
+            case bitRate = "bit_rate"
+        }
     }
 
     let format: Format?
+    let streams: [Stream]?
 }

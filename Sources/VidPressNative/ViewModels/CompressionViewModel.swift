@@ -31,6 +31,10 @@ final class CompressionViewModel: ObservableObject {
         settings.outputDirectory.path
     }
 
+    var hasRetryableJobs: Bool {
+        jobs.contains(where: \.canRetry)
+    }
+
     func refreshBinaryStatus() {
         let status = engine.binaryStatus()
         binaryStatusSummary = status.summary
@@ -128,7 +132,7 @@ final class CompressionViewModel: ObservableObject {
             return
         }
 
-        let runnableStatuses: Set<CompressionStatus> = [.queued, .ready, .failed, .canceled]
+        let runnableStatuses: Set<CompressionStatus> = [.queued, .ready]
         guard jobs.contains(where: { runnableStatuses.contains($0.status) }) else {
             footerMessage = "没有待压缩的视频"
             return
@@ -157,6 +161,26 @@ final class CompressionViewModel: ObservableObject {
         footerMessage = "队列已清空"
     }
 
+    func retryJob(_ id: UUID) {
+        guard !isRunning else { return }
+        resetJobForRetry(id)
+        footerMessage = "已加入重试"
+        startQueue()
+    }
+
+    func retryFailedJobs() {
+        guard !isRunning else { return }
+        let retryableIDs = jobs.filter(\.canRetry).map(\.id)
+        guard !retryableIDs.isEmpty else {
+            footerMessage = "没有可重试的任务"
+            return
+        }
+
+        retryableIDs.forEach(resetJobForRetry)
+        footerMessage = "重试 \(retryableIDs.count) 个任务"
+        startQueue()
+    }
+
     func removeJob(_ id: UUID) {
         guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
         guard jobs[index].status != .compressing else {
@@ -181,10 +205,11 @@ final class CompressionViewModel: ObservableObject {
             do {
                 let metadata = try await engine.probe(sourceURL)
                 guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { continue }
+                jobs[currentIndex].metadata = metadata
                 jobs[currentIndex].duration = metadata.duration
                 jobs[currentIndex].sourceBytes = metadata.size ?? jobs[currentIndex].sourceBytes
                 jobs[currentIndex].status = .ready
-                jobs[currentIndex].detail = metadata.duration.map(Formatters.duration) ?? "就绪"
+                jobs[currentIndex].detail = metadata.summary
             } catch {
                 guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { continue }
                 jobs[currentIndex].status = .ready
@@ -213,7 +238,7 @@ final class CompressionViewModel: ObservableObject {
             }
 
             guard let index = jobs.firstIndex(where: { $0.id == id }) else { continue }
-            guard jobs[index].status != .finished else { continue }
+            guard jobs[index].status == .queued || jobs[index].status == .ready else { continue }
 
             await compressJob(id)
         }
@@ -222,18 +247,24 @@ final class CompressionViewModel: ObservableObject {
     }
 
     private func compressJob(_ id: UUID) async {
-        guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
-        let sourceURL = jobs[index].sourceURL
-        let outputURL = uniqueOutputURL(for: jobs[index])
-        let compressionSettings = settings.normalizedForContainer()
-        let duration = jobs[index].duration
+        guard jobs.contains(where: { $0.id == id }) else { return }
+        await ensureMetadata(for: id)
 
-        jobs[index].status = .compressing
-        jobs[index].progress = 0
-        jobs[index].outputURL = outputURL
-        jobs[index].detail = "启动 FFmpeg"
+        guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { return }
+        let sourceURL = jobs[currentIndex].sourceURL
+        let outputURL = uniqueOutputURL(for: jobs[currentIndex])
+        let duration = jobs[currentIndex].duration
 
         do {
+            let compressionSettings = try settingsForJob(jobs[currentIndex])
+
+            jobs[currentIndex].status = .compressing
+            jobs[currentIndex].progress = 0
+            jobs[currentIndex].outputURL = outputURL
+            jobs[currentIndex].detail = settings.useTargetSizeMode
+                ? "目标 \(settings.targetSizeMB) MB · 视频 \(compressionSettings.videoBitrateKbps) kbps"
+                : "启动 FFmpeg"
+
             let finishedURL = try await engine.compress(
                 input: sourceURL,
                 output: outputURL,
@@ -250,7 +281,7 @@ final class CompressionViewModel: ObservableObject {
             jobs[currentIndex].outputBytes = Self.fileSize(finishedURL)
             jobs[currentIndex].progress = 1
             jobs[currentIndex].status = .finished
-            jobs[currentIndex].detail = jobs[currentIndex].compressionRatioText ?? "已导出"
+            jobs[currentIndex].detail = finishedDetail(for: jobs[currentIndex])
         } catch is CancellationError {
             guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { return }
             jobs[currentIndex].status = .canceled
@@ -269,11 +300,26 @@ final class CompressionViewModel: ObservableObject {
         }
     }
 
+    private func resetJobForRetry(_ id: UUID) {
+        guard let index = jobs.firstIndex(where: { $0.id == id }), jobs[index].canRetry else { return }
+        jobs[index].status = .ready
+        jobs[index].progress = 0
+        jobs[index].outputURL = nil
+        jobs[index].outputBytes = nil
+        jobs[index].detail = jobs[index].metadata?.summary ?? "等待重试"
+    }
+
     private func uniqueOutputURL(for job: VideoJob) -> URL {
         let fileManager = FileManager.default
         let sourceName = job.sourceURL.deletingPathExtension().lastPathComponent
         let currentSettings = settings.normalizedForContainer()
-        let mode = currentSettings.useProfessionalMode ? "pro" : currentSettings.simplePreset.slug
+        let mode = if currentSettings.useTargetSizeMode {
+            "target-\(currentSettings.targetSizeMB)mb"
+        } else if currentSettings.useProfessionalMode {
+            "pro"
+        } else {
+            currentSettings.simplePreset.slug
+        }
         let ext = currentSettings.outputContainer.fileExtension
         let baseName = "\(sourceName)-\(mode)"
         var candidate = settings.outputDirectory.appendingPathComponent("\(baseName).\(ext)")
@@ -299,6 +345,75 @@ final class CompressionViewModel: ObservableObject {
         }
 
         settingsStore.save(normalized)
+    }
+
+    private func ensureMetadata(for id: UUID) async {
+        guard let index = jobs.firstIndex(where: { $0.id == id }),
+              jobs[index].metadata == nil || jobs[index].duration == nil else {
+            return
+        }
+
+        let sourceURL = jobs[index].sourceURL
+        jobs[index].status = .probing
+        jobs[index].detail = "读取元数据"
+
+        do {
+            let metadata = try await engine.probe(sourceURL)
+            guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { return }
+            jobs[currentIndex].metadata = metadata
+            jobs[currentIndex].duration = metadata.duration
+            jobs[currentIndex].sourceBytes = metadata.size ?? jobs[currentIndex].sourceBytes
+            jobs[currentIndex].detail = metadata.summary
+        } catch {
+            guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { return }
+            jobs[currentIndex].detail = "元数据读取失败"
+        }
+    }
+
+    private func settingsForJob(_ job: VideoJob) throws -> CompressionSettings {
+        var currentSettings = settings.normalizedForContainer()
+        guard currentSettings.useTargetSizeMode else {
+            return currentSettings
+        }
+
+        guard let duration = job.duration, duration > 0 else {
+            throw VidPressError("无法读取视频时长，不能按目标体积压缩。")
+        }
+
+        let targetBits = Double(currentSettings.targetSizeMB) * 1_024 * 1_024 * 8
+        let totalKbps = Int((targetBits * 0.92 / duration / 1_000).rounded(.down))
+        let audioKbps = currentSettings.removeAudio ? 0 : max(64, min(currentSettings.audioBitrateKbps, 192))
+        let videoKbps = totalKbps - audioKbps
+
+        guard videoKbps >= 120 else {
+            throw VidPressError("目标体积太小，无法为这段视频保留足够视频码率。")
+        }
+
+        currentSettings.useProfessionalMode = true
+        currentSettings.videoCodec = currentSettings.outputContainer.defaultVideoCodec
+        currentSettings.audioCodec = currentSettings.outputContainer.defaultAudioCodec
+        currentSettings.useVideoBitrate = true
+        currentSettings.videoBitrateKbps = videoKbps
+        currentSettings.audioBitrateKbps = audioKbps
+        currentSettings.encoderSpeed = .medium
+
+        return currentSettings.normalizedForContainer()
+    }
+
+    private func finishedDetail(for job: VideoJob) -> String {
+        var parts: [String] = []
+
+        if let ratio = job.compressionRatioText {
+            parts.append(ratio)
+        }
+
+        if settings.useTargetSizeMode, let outputBytes = job.outputBytes {
+            let targetBytes = Int64(settings.targetSizeMB) * 1_024 * 1_024
+            let deltaMB = Double(outputBytes - targetBytes) / 1_024 / 1_024
+            parts.append(String(format: "目标差 %.1f MB", deltaMB))
+        }
+
+        return parts.isEmpty ? "已导出" : parts.joined(separator: " · ")
     }
 
     private static func fileSize(_ url: URL) -> Int64? {

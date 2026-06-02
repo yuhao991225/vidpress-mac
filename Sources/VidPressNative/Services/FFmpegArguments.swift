@@ -10,7 +10,7 @@ enum FFmpegArgumentBuilder {
             "-i", input.path
         ]
 
-        if settings.useProfessionalMode {
+        if settings.useProfessionalMode || settings.useTargetSizeMode {
             appendProfessionalArguments(&arguments, settings: settings)
         } else {
             appendSimplePresetArguments(&arguments, settings: settings)

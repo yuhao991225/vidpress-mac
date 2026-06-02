@@ -106,6 +106,7 @@ private struct QueuePanel: View {
                             ForEach(viewModel.jobs) { job in
                                 JobRow(
                                     job: job,
+                                    retry: { viewModel.retryJob(job.id) },
                                     remove: { viewModel.removeJob(job.id) },
                                     reveal: { viewModel.reveal(job.outputURL) }
                                 )
@@ -149,6 +150,7 @@ private struct EmptyQueueView: View {
 
 private struct JobRow: View {
     let job: VideoJob
+    let retry: () -> Void
     let remove: () -> Void
     let reveal: () -> Void
 
@@ -182,6 +184,13 @@ private struct JobRow: View {
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                    if let summary = job.metadata?.summary {
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
 
                 Spacer(minLength: 12)
@@ -194,6 +203,13 @@ private struct JobRow: View {
                         .buttonStyle(.borderless)
                         .help("在访达中显示")
                         .disabled(job.outputURL == nil)
+
+                        Button(action: retry) {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("重试")
+                        .disabled(!job.canRetry)
 
                         Button(action: remove) {
                             Image(systemName: "xmark.circle")
@@ -259,17 +275,23 @@ private struct SettingsPanel: View {
 
                 GroupBox("模式") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Toggle("专业参数", isOn: $viewModel.settings.useProfessionalMode)
+                        Toggle("目标体积", isOn: $viewModel.settings.useTargetSizeMode)
 
-                        if viewModel.settings.useProfessionalMode {
-                            ProfessionalSettingsView(settings: $viewModel.settings)
+                        if viewModel.settings.useTargetSizeMode {
+                            NumericField(title: "目标体积", suffix: "MB", value: $viewModel.settings.targetSizeMB)
                         } else {
-                            Picker("压缩策略", selection: $viewModel.settings.simplePreset) {
-                                ForEach(SimplePreset.allCases) { preset in
-                                    Text(preset.title).tag(preset)
+                            Toggle("专业参数", isOn: $viewModel.settings.useProfessionalMode)
+
+                            if viewModel.settings.useProfessionalMode {
+                                ProfessionalSettingsView(settings: $viewModel.settings)
+                            } else {
+                                Picker("压缩策略", selection: $viewModel.settings.simplePreset) {
+                                    ForEach(SimplePreset.allCases) { preset in
+                                        Text(preset.title).tag(preset)
+                                    }
                                 }
+                                .pickerStyle(.radioGroup)
                             }
-                            .pickerStyle(.radioGroup)
                         }
                     }
                     .padding(.top, 4)
@@ -284,6 +306,14 @@ private struct SettingsPanel: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .disabled(viewModel.isRunning || viewModel.jobs.isEmpty)
+
+                        Button {
+                            viewModel.retryFailedJobs()
+                        } label: {
+                            Label("重试失败", systemImage: "arrow.clockwise")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .disabled(viewModel.isRunning || !viewModel.hasRetryableJobs)
 
                         Button(role: .destructive) {
                             viewModel.clearAll()
