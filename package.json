@@ -1,6 +1,6 @@
 {
   "name": "vidpress-mac",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A local-first macOS desktop app for compressing and exporting popular video formats.",
   "main": "dist-electron/main.js",
   "type": "commonjs",
