@@ -1,6 +1,6 @@
 {
   "name": "vidpress-mac",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A native SwiftUI macOS app for local video compression with FFmpeg.",
   "license": "MIT",
   "author": "",

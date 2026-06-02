@@ -5,9 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="VidPress"
 PRODUCT_NAME="VidPressNative"
 CONFIGURATION="${CONFIGURATION:-release}"
-VERSION="0.3.1"
+VERSION="$(node -p "require('./package.json').version")"
+ARCH="$(uname -m)"
 APP_PATH="$ROOT/release/$APP_NAME.app"
-ZIP_PATH="$ROOT/release/VidPress-native-mac-arm64.zip"
+ZIP_PATH="$ROOT/release/VidPress-$VERSION-mac-$ARCH.zip"
+DMG_PATH="$ROOT/release/VidPress-$VERSION-mac-$ARCH.dmg"
+DMG_STAGING="$ROOT/release/.dmg-staging"
 
 cd "$ROOT"
 
@@ -20,7 +23,7 @@ if [[ ! -x "$EXECUTABLE" ]]; then
   exit 1
 fi
 
-rm -rf "$APP_PATH" "$ZIP_PATH"
+rm -rf "$APP_PATH" "$ZIP_PATH" "$DMG_PATH" "$DMG_STAGING"
 mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$ROOT/release"
 
 cp "$EXECUTABLE" "$APP_PATH/Contents/MacOS/$APP_NAME"
@@ -126,5 +129,19 @@ fi
 
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
 
+mkdir -p "$DMG_STAGING"
+cp -R "$APP_PATH" "$DMG_STAGING/$APP_NAME.app"
+ln -s /Applications "$DMG_STAGING/Applications"
+
+hdiutil create \
+  -volname "$APP_NAME" \
+  -srcfolder "$DMG_STAGING" \
+  -ov \
+  -format UDZO \
+  "$DMG_PATH" >/dev/null
+
+rm -rf "$DMG_STAGING"
+
 echo "Built $APP_PATH"
 echo "Packed $ZIP_PATH"
+echo "Packed $DMG_PATH"

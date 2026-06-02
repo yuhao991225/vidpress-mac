@@ -49,9 +49,10 @@ npm run dist
 产物会输出到 `release/`：
 
 - `release/VidPress.app`
-- `release/VidPress-native-mac-arm64.zip`
+- `release/VidPress-版本号-mac-架构.zip`
+- `release/VidPress-版本号-mac-架构.dmg`
 
-打包脚本会写入 AppKit 启动元数据，把 `node_modules` 中的 FFmpeg/FFprobe 复制进 `.app/Contents/Resources/`，并做本地 ad-hoc 签名。ad-hoc 签名适合本机开发和测试；公开分发仍建议使用 Apple Developer Program 的 Developer ID 签名与 notarization。
+打包脚本会写入 AppKit 启动元数据，把 `node_modules` 中的 FFmpeg/FFprobe 复制进 `.app/Contents/Resources/`，并做本地 ad-hoc 签名。DMG 包内包含 `VidPress.app` 和 `Applications` 快捷方式，方便拖拽安装。ad-hoc 签名适合本机开发和测试；公开分发仍建议使用 Apple Developer Program 的 Developer ID 签名与 notarization。
 
 ## 说明
 
