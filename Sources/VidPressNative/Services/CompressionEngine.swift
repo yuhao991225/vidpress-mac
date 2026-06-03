@@ -73,7 +73,8 @@ final class CompressionEngine {
         output: URL,
         settings: CompressionSettings,
         duration: Double?,
-        progress: @escaping @MainActor (Double, String) -> Void
+        progress: @escaping @MainActor (Double, String) -> Void,
+        logUpdate: @escaping @MainActor (String) -> Void
     ) async throws -> URL {
         try FileManager.default.createDirectory(
             at: output.deletingLastPathComponent(),
@@ -89,6 +90,7 @@ final class CompressionEngine {
                         settings: settings,
                         duration: duration,
                         progress: progress,
+                        logUpdate: logUpdate,
                         continuation: continuation
                     )
                 } catch {
@@ -108,6 +110,7 @@ final class CompressionEngine {
         settings: CompressionSettings,
         duration: Double?,
         progress: @escaping @MainActor (Double, String) -> Void,
+        logUpdate: @escaping @MainActor (String) -> Void,
         continuation: CheckedContinuation<URL, Error>
     ) throws {
         let ffmpegURL = try locator.requireFFmpeg()
@@ -147,6 +150,7 @@ final class CompressionEngine {
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
             outputState.appendStderr(text)
+            Task { @MainActor in logUpdate(text) }
         }
 
         process.terminationHandler = { process in
@@ -227,8 +231,8 @@ private final class ProcessOutputState: @unchecked Sendable {
         defer { lock.unlock() }
 
         stderrLog += text
-        if stderrLog.count > 16_000 {
-            stderrLog = String(stderrLog.suffix(16_000))
+        if stderrLog.count > 65_536 {
+            stderrLog = String(stderrLog.suffix(65_536))
         }
     }
 

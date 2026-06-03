@@ -55,6 +55,7 @@ FFMPEG_SOURCE="$(find_binary VIDPRESS_FFMPEG_PATH \
   /usr/local/bin/ffmpeg || true)"
 
 FFPROBE_SOURCE="$(find_binary VIDPRESS_FFPROBE_PATH \
+  "$ROOT/node_modules/@ffprobe-installer/darwin-arm64/ffprobe" \
   "$ROOT/node_modules/ffprobe-static/bin/darwin/arm64/ffprobe" \
   "$ROOT/node_modules/ffprobe-static/bin/darwin/x64/ffprobe" \
   /opt/homebrew/bin/ffprobe \
@@ -78,6 +79,7 @@ mkdir -p "$APP_PATH/Contents/Resources/Licenses"
 for license_file in \
   "$ROOT/node_modules/ffmpeg-static/ffmpeg.LICENSE" \
   "$ROOT/node_modules/ffmpeg-static/LICENSE" \
+  "$ROOT/node_modules/@ffprobe-installer/darwin-arm64/README.md" \
   "$ROOT/node_modules/ffprobe-static/LICENSE"; do
   if [[ -f "$license_file" ]]; then
     cp "$license_file" "$APP_PATH/Contents/Resources/Licenses/$(basename "$license_file")"

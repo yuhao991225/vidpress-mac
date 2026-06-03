@@ -6,6 +6,9 @@ import UniformTypeIdentifiers
 @MainActor
 final class CompressionViewModel: ObservableObject {
     @Published var jobs: [VideoJob] = []
+    @Published var history: [CompressionHistoryItem] = []
+    @Published var customPresets: [CustomCompressionPreset] = []
+    @Published var presetName = ""
     @Published var settings = CompressionSettings() {
         didSet {
             persistAndNormalizeSettings()
@@ -19,12 +22,22 @@ final class CompressionViewModel: ObservableObject {
 
     private let engine = CompressionEngine()
     private let settingsStore = CompressionSettingsStore()
+    private let workStateStore = CompressionWorkStateStore()
+    private let notificationService = NotificationService()
     private var queueTask: Task<Void, Never>?
     private var isApplyingSettingsNormalization = false
 
     init() {
         settings = settingsStore.load()
+        jobs = workStateStore.loadQueue()
+        history = workStateStore.loadHistory()
+        customPresets = workStateStore.loadCustomPresets()
         refreshBinaryStatus()
+        notificationService.requestAuthorization()
+
+        if !jobs.isEmpty {
+            footerMessage = "已恢复 \(jobs.count) 个队列任务"
+        }
     }
 
     var outputDirectoryTitle: String {
@@ -114,6 +127,7 @@ final class CompressionViewModel: ObservableObject {
 
         let newJobs = newURLs.map { VideoJob(sourceURL: $0, sourceBytes: Self.fileSize($0)) }
         jobs.append(contentsOf: newJobs)
+        saveQueueSnapshot()
         footerMessage = "已添加 \(newJobs.count) 个视频"
 
         let ids = newJobs.map(\.id)
@@ -152,12 +166,14 @@ final class CompressionViewModel: ObservableObject {
 
     func clearFinished() {
         jobs.removeAll { $0.status == .finished || $0.status == .failed || $0.status == .canceled }
+        saveQueueSnapshot()
         footerMessage = jobs.isEmpty ? "准备就绪" : "已清理完成项"
     }
 
     func clearAll() {
         cancelQueue()
         jobs.removeAll()
+        saveQueueSnapshot()
         footerMessage = "队列已清空"
     }
 
@@ -188,11 +204,77 @@ final class CompressionViewModel: ObservableObject {
             return
         }
         jobs.remove(at: index)
+        saveQueueSnapshot()
     }
 
     func reveal(_ url: URL?) {
         guard let url else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func clearHistory() {
+        history.removeAll()
+        workStateStore.saveHistory(history)
+        footerMessage = "历史记录已清空"
+    }
+
+    func removeHistoryItem(_ id: UUID) {
+        history.removeAll { $0.id == id }
+        workStateStore.saveHistory(history)
+    }
+
+    func exportLog(_ id: UUID) {
+        guard let job = jobs.first(where: { $0.id == id }),
+              let log = job.ffmpegLog,
+              !log.isEmpty else {
+            footerMessage = "没有可导出的日志"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(job.sourceURL.deletingPathExtension().lastPathComponent)-ffmpeg.log"
+        panel.allowedContentTypes = [.plainText]
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try log.write(to: url, atomically: true, encoding: .utf8)
+                footerMessage = "日志已导出"
+            } catch {
+                footerMessage = "日志导出失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func saveCurrentPreset() {
+        let name = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            footerMessage = "请输入预设名称"
+            return
+        }
+
+        var presetSettings = settings.normalizedForContainer()
+        presetSettings.outputDirectory = CompressionSettings.defaultOutputDirectory()
+        customPresets.removeAll { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        customPresets.insert(CustomCompressionPreset(name: name, settings: presetSettings), at: 0)
+        presetName = ""
+        workStateStore.saveCustomPresets(customPresets)
+        footerMessage = "已保存预设：\(name)"
+    }
+
+    func applyPreset(_ id: UUID) {
+        guard let preset = customPresets.first(where: { $0.id == id }) else { return }
+        var appliedSettings = preset.settings.normalizedForContainer()
+        appliedSettings.outputDirectory = settings.outputDirectory
+        settings = appliedSettings
+        footerMessage = "已应用预设：\(preset.name)"
+    }
+
+    func deletePreset(_ id: UUID) {
+        guard let preset = customPresets.first(where: { $0.id == id }) else { return }
+        customPresets.removeAll { $0.id == id }
+        workStateStore.saveCustomPresets(customPresets)
+        footerMessage = "已删除预设：\(preset.name)"
     }
 
     private func probeJobs(_ ids: [UUID]) async {
@@ -201,6 +283,7 @@ final class CompressionViewModel: ObservableObject {
             let sourceURL = jobs[index].sourceURL
             jobs[index].status = .probing
             jobs[index].detail = "读取元数据"
+            saveQueueSnapshot()
 
             do {
                 let metadata = try await engine.probe(sourceURL)
@@ -210,10 +293,12 @@ final class CompressionViewModel: ObservableObject {
                 jobs[currentIndex].sourceBytes = metadata.size ?? jobs[currentIndex].sourceBytes
                 jobs[currentIndex].status = .ready
                 jobs[currentIndex].detail = metadata.summary
+                saveQueueSnapshot()
             } catch {
                 guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { continue }
                 jobs[currentIndex].status = .ready
                 jobs[currentIndex].detail = "元数据读取失败"
+                saveQueueSnapshot()
             }
         }
     }
@@ -226,9 +311,11 @@ final class CompressionViewModel: ObservableObject {
             isRunning = false
             queueTask = nil
             refreshBinaryStatus()
+            saveQueueSnapshot()
         }
 
         let ids = jobs.map(\.id)
+        var processedIDs: [UUID] = []
 
         for id in ids {
             if Task.isCancelled {
@@ -241,9 +328,11 @@ final class CompressionViewModel: ObservableObject {
             guard jobs[index].status == .queued || jobs[index].status == .ready else { continue }
 
             await compressJob(id)
+            processedIDs.append(id)
         }
 
         footerMessage = "队列完成"
+        notifyQueueFinished(processedIDs)
     }
 
     private func compressJob(_ id: UUID) async {
@@ -261,9 +350,11 @@ final class CompressionViewModel: ObservableObject {
             jobs[currentIndex].status = .compressing
             jobs[currentIndex].progress = 0
             jobs[currentIndex].outputURL = outputURL
+            jobs[currentIndex].ffmpegLog = nil
             jobs[currentIndex].detail = settings.useTargetSizeMode
                 ? "目标 \(settings.targetSizeMB) MB · 视频 \(compressionSettings.videoBitrateKbps) kbps"
                 : "启动 FFmpeg"
+            saveQueueSnapshot()
 
             let finishedURL = try await engine.compress(
                 input: sourceURL,
@@ -274,6 +365,8 @@ final class CompressionViewModel: ObservableObject {
                 guard let self, let currentIndex = self.jobs.firstIndex(where: { $0.id == id }) else { return }
                 self.jobs[currentIndex].progress = fraction
                 self.jobs[currentIndex].detail = detail
+            } logUpdate: { [weak self] text in
+                self?.appendLog(text, to: id)
             }
 
             guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { return }
@@ -282,14 +375,18 @@ final class CompressionViewModel: ObservableObject {
             jobs[currentIndex].progress = 1
             jobs[currentIndex].status = .finished
             jobs[currentIndex].detail = finishedDetail(for: jobs[currentIndex])
+            recordHistory(for: jobs[currentIndex])
+            saveQueueSnapshot()
         } catch is CancellationError {
             guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { return }
             jobs[currentIndex].status = .canceled
             jobs[currentIndex].detail = "已取消"
+            saveQueueSnapshot()
         } catch {
             guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { return }
             jobs[currentIndex].status = .failed
             jobs[currentIndex].detail = error.localizedDescription
+            saveQueueSnapshot()
         }
     }
 
@@ -298,6 +395,7 @@ final class CompressionViewModel: ObservableObject {
             jobs[index].status = .canceled
             jobs[index].detail = "已取消"
         }
+        saveQueueSnapshot()
     }
 
     private func resetJobForRetry(_ id: UUID) {
@@ -306,7 +404,9 @@ final class CompressionViewModel: ObservableObject {
         jobs[index].progress = 0
         jobs[index].outputURL = nil
         jobs[index].outputBytes = nil
+        jobs[index].ffmpegLog = nil
         jobs[index].detail = jobs[index].metadata?.summary ?? "等待重试"
+        saveQueueSnapshot()
     }
 
     private func uniqueOutputURL(for job: VideoJob) -> URL {
@@ -364,9 +464,11 @@ final class CompressionViewModel: ObservableObject {
             jobs[currentIndex].duration = metadata.duration
             jobs[currentIndex].sourceBytes = metadata.size ?? jobs[currentIndex].sourceBytes
             jobs[currentIndex].detail = metadata.summary
+            saveQueueSnapshot()
         } catch {
             guard let currentIndex = jobs.firstIndex(where: { $0.id == id }) else { return }
             jobs[currentIndex].detail = "元数据读取失败"
+            saveQueueSnapshot()
         }
     }
 
@@ -414,6 +516,32 @@ final class CompressionViewModel: ObservableObject {
         }
 
         return parts.isEmpty ? "已导出" : parts.joined(separator: " · ")
+    }
+
+    private func recordHistory(for job: VideoJob) {
+        guard let outputURL = job.outputURL else { return }
+
+        history.removeAll {
+            $0.sourceURL.path == job.sourceURL.path && $0.outputURL.path == outputURL.path
+        }
+        history.insert(CompressionHistoryItem(job: job), at: 0)
+        workStateStore.saveHistory(history)
+    }
+
+    private func saveQueueSnapshot() {
+        workStateStore.saveQueue(jobs)
+    }
+
+    private func appendLog(_ text: String, to id: UUID) {
+        guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
+        let combined = (jobs[index].ffmpegLog ?? "") + text
+        jobs[index].ffmpegLog = combined.count > 65_536 ? String(combined.suffix(65_536)) : combined
+    }
+
+    private func notifyQueueFinished(_ processedIDs: [UUID]) {
+        let processedJobs = jobs.filter { processedIDs.contains($0.id) }
+        let failedCount = processedJobs.filter { $0.status == .failed }.count
+        notificationService.notifyQueueFinished(total: processedJobs.count, failed: failedCount)
     }
 
     private static func fileSize(_ url: URL) -> Int64? {

@@ -95,6 +95,7 @@ final class FFmpegLocator {
             ]
         case "ffprobe":
             return [
+                currentDirectory.appendingPathComponent("node_modules/@ffprobe-installer/darwin-arm64/ffprobe"),
                 currentDirectory.appendingPathComponent("node_modules/ffprobe-static/bin/darwin/arm64/ffprobe"),
                 currentDirectory.appendingPathComponent("node_modules/ffprobe-static/bin/darwin/x64/ffprobe")
             ]

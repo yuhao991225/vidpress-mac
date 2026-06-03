@@ -108,7 +108,8 @@ private struct QueuePanel: View {
                                     job: job,
                                     retry: { viewModel.retryJob(job.id) },
                                     remove: { viewModel.removeJob(job.id) },
-                                    reveal: { viewModel.reveal(job.outputURL) }
+                                    reveal: { viewModel.reveal(job.outputURL) },
+                                    exportLog: { viewModel.exportLog(job.id) }
                                 )
                             }
                         }
@@ -153,6 +154,7 @@ private struct JobRow: View {
     let retry: () -> Void
     let remove: () -> Void
     let reveal: () -> Void
+    let exportLog: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
@@ -203,6 +205,13 @@ private struct JobRow: View {
                         .buttonStyle(.borderless)
                         .help("在访达中显示")
                         .disabled(job.outputURL == nil)
+
+                        Button(action: exportLog) {
+                            Image(systemName: "doc.text")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("导出 FFmpeg 日志")
+                        .disabled(job.ffmpegLog?.isEmpty ?? true)
 
                         Button(action: retry) {
                             Image(systemName: "arrow.clockwise")
@@ -297,6 +306,11 @@ private struct SettingsPanel: View {
                     .padding(.top, 4)
                 }
 
+                GroupBox("预设") {
+                    CustomPresetsPanel(viewModel: viewModel)
+                        .padding(.top, 4)
+                }
+
                 GroupBox("队列") {
                     VStack(spacing: 10) {
                         Button {
@@ -325,10 +339,178 @@ private struct SettingsPanel: View {
                     }
                     .padding(.top, 4)
                 }
+
+                GroupBox("历史") {
+                    HistoryPanel(viewModel: viewModel)
+                        .padding(.top, 4)
+                }
             }
             .padding(18)
         }
         .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
+    }
+}
+
+private struct CustomPresetsPanel: View {
+    @ObservedObject var viewModel: CompressionViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                TextField("预设名称", text: $viewModel.presetName)
+                    .textFieldStyle(.roundedBorder)
+
+                Button {
+                    viewModel.saveCurrentPreset()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .help("保存当前参数")
+                .disabled(viewModel.presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if viewModel.customPresets.isEmpty {
+                Text("暂无自定义预设")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(viewModel.customPresets.prefix(5)) { preset in
+                    CustomPresetRow(
+                        preset: preset,
+                        apply: { viewModel.applyPreset(preset.id) },
+                        delete: { viewModel.deletePreset(preset.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct CustomPresetRow: View {
+    let preset: CustomCompressionPreset
+    let apply: () -> Void
+    let delete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(preset.name)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                Text(presetSummary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            Button(action: apply) {
+                Image(systemName: "checkmark.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("应用预设")
+
+            Button(action: delete) {
+                Image(systemName: "xmark.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("删除预设")
+        }
+    }
+
+    private var presetSummary: String {
+        let settings = preset.settings
+        if settings.useTargetSizeMode {
+            return "\(settings.outputContainer.title) · 目标 \(settings.targetSizeMB) MB"
+        }
+
+        if settings.useProfessionalMode {
+            return "\(settings.outputContainer.title) · 专业参数"
+        }
+
+        return "\(settings.outputContainer.title) · \(settings.simplePreset.title)"
+    }
+}
+
+private struct HistoryPanel: View {
+    @ObservedObject var viewModel: CompressionViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if viewModel.history.isEmpty {
+                Text("暂无导出记录")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(Array(viewModel.history.prefix(6))) { item in
+                    HistoryRow(
+                        item: item,
+                        reveal: { viewModel.reveal(item.outputURL) },
+                        remove: { viewModel.removeHistoryItem(item.id) }
+                    )
+                }
+
+                Button(role: .destructive) {
+                    viewModel.clearHistory()
+                } label: {
+                    Label("清空历史", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+}
+
+private struct HistoryRow: View {
+    let item: CompressionHistoryItem
+    let reveal: () -> Void
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.sourceName)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                Text(historyDetail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 6)
+
+            Button(action: reveal) {
+                Image(systemName: "folder")
+            }
+            .buttonStyle(.borderless)
+            .help("在访达中显示")
+
+            Button(action: remove) {
+                Image(systemName: "xmark.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("移除记录")
+        }
+    }
+
+    private var historyDetail: String {
+        var parts = [
+            Formatters.shortDateTime(item.finishedAt),
+            Formatters.bytes(item.outputBytes)
+        ]
+
+        if let ratio = item.compressionRatioText {
+            parts.append(ratio)
+        }
+
+        return parts.joined(separator: " · ")
     }
 }
 

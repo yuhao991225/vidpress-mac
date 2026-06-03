@@ -301,7 +301,21 @@ struct CompressionSettings: Codable, Equatable {
     }
 }
 
-struct VideoJob: Identifiable, Equatable {
+struct CustomCompressionPreset: Identifiable, Equatable, Codable {
+    let id: UUID
+    var name: String
+    var settings: CompressionSettings
+    let createdAt: Date
+
+    init(name: String, settings: CompressionSettings) {
+        self.id = UUID()
+        self.name = name
+        self.settings = settings
+        self.createdAt = Date()
+    }
+}
+
+struct VideoJob: Identifiable, Equatable, Codable {
     let id: UUID
     let sourceURL: URL
     var duration: Double?
@@ -309,6 +323,7 @@ struct VideoJob: Identifiable, Equatable {
     var metadata: VideoMetadata?
     var outputURL: URL?
     var outputBytes: Int64?
+    var ffmpegLog: String?
     var progress: Double
     var status: CompressionStatus
     var detail: String
@@ -321,9 +336,32 @@ struct VideoJob: Identifiable, Equatable {
         self.metadata = nil
         self.outputURL = nil
         self.outputBytes = nil
+        self.ffmpegLog = nil
         self.progress = 0
         self.status = .queued
         self.detail = "等待处理"
+    }
+
+    func restoredForLaunch() -> VideoJob {
+        var restored = self
+
+        switch restored.status {
+        case .probing, .compressing:
+            restored.status = .queued
+            restored.progress = 0
+            restored.outputURL = nil
+            restored.outputBytes = nil
+            restored.ffmpegLog = nil
+            restored.detail = restored.metadata?.summary ?? "等待继续"
+        case .queued:
+            restored.detail = restored.metadata?.summary ?? "等待处理"
+        case .ready:
+            restored.detail = restored.metadata?.summary ?? "就绪"
+        case .finished, .failed, .canceled:
+            break
+        }
+
+        return restored
     }
 
     var sourceName: String {
@@ -346,7 +384,7 @@ struct VideoJob: Identifiable, Equatable {
     }
 }
 
-struct VideoMetadata: Equatable {
+struct VideoMetadata: Equatable, Codable {
     let duration: Double?
     let size: Int64?
     let videoCodec: String?
@@ -380,6 +418,43 @@ struct VideoMetadata: Equatable {
         }
 
         return parts.isEmpty ? "媒体信息已读取" : parts.joined(separator: " · ")
+    }
+}
+
+struct CompressionHistoryItem: Identifiable, Equatable, Codable {
+    let id: UUID
+    let finishedAt: Date
+    let sourceURL: URL
+    let outputURL: URL
+    let sourceBytes: Int64?
+    let outputBytes: Int64?
+    let duration: Double?
+    let summary: String
+
+    init(job: VideoJob) {
+        self.id = UUID()
+        self.finishedAt = Date()
+        self.sourceURL = job.sourceURL
+        self.outputURL = job.outputURL ?? job.sourceURL
+        self.sourceBytes = job.sourceBytes
+        self.outputBytes = job.outputBytes
+        self.duration = job.duration
+        self.summary = job.metadata?.summary ?? "媒体信息未记录"
+    }
+
+    var sourceName: String {
+        sourceURL.lastPathComponent
+    }
+
+    var outputName: String {
+        outputURL.lastPathComponent
+    }
+
+    var compressionRatioText: String? {
+        guard let sourceBytes, let outputBytes, sourceBytes > 0 else { return nil }
+        let saved = max(0, sourceBytes - outputBytes)
+        let percent = Double(saved) / Double(sourceBytes) * 100
+        return String(format: "节省 %.1f%%", percent)
     }
 }
 

@@ -47,4 +47,11 @@ enum Formatters {
         formatter.maximumFractionDigits = maxFractionDigits
         return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.\(maxFractionDigits)f", value)
     }
+
+    static func shortDateTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
 }
